@@ -69,8 +69,13 @@ def init_polymarket():
                     logger.warning(f"Ne mogu kreirati API kredencijale: {e2}")
                     creds = None
 
+        proxy = os.environ.get("POLYMARKET_PROXY_WALLET", "")
         if creds:
-            polymarket_client = ClobClient(host, key=pk, chain_id=POLYGON, creds=creds)
+            if proxy:
+                polymarket_client = ClobClient(host, key=pk, chain_id=POLYGON, creds=creds, funder=proxy, signature_type=2)
+                logger.info(f"Polymarket spojen s proxy wallet: {proxy[:10]}...")
+            else:
+                polymarket_client = ClobClient(host, key=pk, chain_id=POLYGON, creds=creds)
             logger.info(f"API Key: {creds.api_key}")
         else:
             polymarket_client = temp_client
