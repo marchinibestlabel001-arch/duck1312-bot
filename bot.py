@@ -619,9 +619,9 @@ auto_trading = {
     "enabled": False,
     "chat_id": None,           # Telegram chat za notifikacije
     "bankroll": 16.0,          # USDC bankroll
-    "min_edge": 0.08,          # Minimalni edge (8%) da postavi bet
-    "max_bet_pct": 0.10,       # Max 10% bankrolla po betu (~$1.6)
-    "interval_min": 60,        # Skeniranje svakih 60 minuta
+    "min_edge": 0.03,          # Minimalni edge (3%) da postavi bet
+    "max_bet_pct": 0.07,       # Max 7% bankrolla po betu (~$1.1) - malo po mnogo oklada
+    "interval_min": 15,        # Skeniranje svakih 15 minuta
     "analyzed_today": set(),   # Već analizirana tržišta danas
     "task": None,
 }
@@ -642,7 +642,7 @@ async def auto_scan_and_trade(app):
                 m for m in markets
                 if m.get("active")
                 and m.get("condition_id") not in auto_trading["analyzed_today"]
-            ][:15]  # Max 15 po skeniranju
+            ][:100]  # Max 100 po skeniranju
 
             if not candidates:
                 auto_trading["analyzed_today"].clear()
