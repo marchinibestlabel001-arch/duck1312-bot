@@ -1131,8 +1131,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def post_init(app: Application) -> None:
     """Automatski pokreni auto-trading pri startu ako je Polymarket spojen i OWNER_CHAT_ID postavljen."""
     owner_chat_id = os.environ.get("OWNER_CHAT_ID")
-    if polymarket_client is not None and owner_chat_id:
+    if owner_chat_id:
         owner_chat_id = int(owner_chat_id)
+
+        # Pokusaj spojiti Polymarket ako jos nije
+        if polymarket_client is None:
+            init_polymarket()
+
         auto_trading["enabled"] = True
         auto_trading["chat_id"] = owner_chat_id
         auto_trading["analyzed_today"].clear()
@@ -1140,25 +1145,24 @@ async def post_init(app: Application) -> None:
         task = asyncio.create_task(auto_scan_and_trade(app))
         auto_trading["task"] = task
 
-        logger.info(f"🤖 Auto-trading automatski pokrenut za chat {owner_chat_id}")
+        pm_status = "SPOJEN" if polymarket_client is not None else "NIJE SPOJEN - trading ce biti onemogucen"
+        logger.info(f"Auto-trading pokrenut za chat {owner_chat_id}, Polymarket: {pm_status}")
 
         try:
             await app.bot.send_message(
                 owner_chat_id,
-                f"🤖 Bot pokrenut - Auto-trading AKTIVAN\n\n"
+                f"Bot pokrenut - Auto-trading AKTIVAN\n\n"
+                f"Polymarket: {pm_status}\n"
                 f"Bankroll: {auto_trading['bankroll']} USDC\n"
                 f"Min edge: {auto_trading['min_edge']*100:.0f}%\n"
                 f"Max bet: {auto_trading['max_bet_pct']*100:.0f}% bankrolla\n"
                 f"Skeniranje: svakih {auto_trading['interval_min']} min\n\n"
-                f"Bot ce automatski skenirati tržišta i tradati."
+                f"Bot automatski skenira trzista i trguje."
             )
         except Exception as e:
             logger.error(f"Greška pri slanju startup poruke: {e}")
     else:
-        if polymarket_client is None:
-            logger.info("⚠️ Auto-trading nije pokrenut - Polymarket nije spojen")
-        else:
-            logger.info("⚠️ Auto-trading nije pokrenut - OWNER_CHAT_ID nije postavljen")
+        logger.info("Auto-trading nije pokrenut - OWNER_CHAT_ID nije postavljen")
 
 
 def main() -> None:
