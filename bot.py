@@ -621,7 +621,7 @@ auto_trading = {
     "bankroll": 16.0,          # USDC bankroll
     "min_edge": 0.03,          # Minimalni edge (3%) da postavi bet
     "max_bet_pct": 0.07,       # Max 7% bankrolla po betu (~$1.1) - malo po mnogo oklada
-    "interval_min": 15,        # Skeniranje svakih 15 minuta
+    "interval_min": 10,        # Skeniranje svakih 10 minuta
     "analyzed_today": set(),   # Već analizirana tržišta danas
     "task": None,
 }
