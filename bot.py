@@ -681,95 +681,75 @@ async def auto_scan_and_trade(app):
                 if yes_price is None or yes_price < 0.03 or yes_price > 0.97:
                     continue
 
-                # Claude AI procjena
-                price_str = " | ".join([f"{k}: {v*100:.1f}%" for k, v in prices.items()])
-                prompt = f"""Analiziraj ovo Polymarket tržište za auto-trading:
+                # Matematička analiza bez AI (štedi API kredite)
+                # Tražimo tržišta gdje je cijena blizu ekstremnih vrijednosti (mispricing signal)
+                no_price = 1.0 - yes_price
 
-Pitanje: {question}
-Tržišna cijena: {price_str}
+                # Strategija 1: Kupuj NO kad je YES precjenjen (>85%) - mean reversion
+                # Strategija 2: Kupuj YES kad je jako podcjenjen (<15%) - underdog value
+                # Strategija 3: Tržišta blizu 50/50 s volumenom - liquidity play
+                trade = "SKIP"
+                true_prob = yes_price
+                reasoning = ""
 
-Pretraži internet za najnovije informacije o ovoj temi.
+                if yes_price > 0.85:
+                    # YES je možda precjenjen - kupuj NO
+                    true_prob = 0.70  # Konzervativna procjena
+                    edge = (1 - true_prob) - no_price
+                    if edge >= auto_trading["min_edge"]:
+                        trade = "NO"
+                        reasoning = f"YES precjenjen na {yes_price*100:.0f}%, kupujem NO"
+                elif yes_price < 0.15:
+                    # YES je možda podcjenjen - kupuj YES
+                    true_prob = 0.30  # Konzervativna procjena
+                    edge = true_prob - yes_price
+                    if edge >= auto_trading["min_edge"]:
+                        trade = "YES"
+                        reasoning = f"YES podcjenjen na {yes_price*100:.0f}%, kupujem YES"
+                elif 0.35 <= yes_price <= 0.65:
+                    # Blizu 50/50 - preskačemo, prevelika nesigurnost
+                    trade = "SKIP"
+                else:
+                    trade = "SKIP"
 
-Odgovori SAMO u ovom JSON formatu (bez ičeg drugog):
-{{
-  "true_probability_yes": 0.XX,
-  "confidence": "low/medium/high",
-  "reasoning": "kratko objašnjenje",
-  "trade": "YES/NO/SKIP"
-}}
+                if trade == "SKIP":
+                    continue
 
-- true_probability_yes: tvoja procjena stvarne vjerojatnosti YES ishoda (0.0-1.0)
-- confidence: koliko si siguran u procjenu
-- trade: YES ako kupi YES token, NO ako kupi NO token, SKIP ako nema edgea
-  Samo predloži trade ako je |true_prob - market_price| > {auto_trading['min_edge']}"""
+                # Izračunaj edge i Kelly bet
+                if trade == "YES":
+                    market_p = yes_price
+                    edge = true_prob - market_p
+                    token = next((t for t in tokens if t.get("outcome") in ["Yes", "YES"]), None)
+                else:  # NO
+                    market_p = no_price
+                    true_p_no = 1 - true_prob
+                    edge = true_p_no - market_p
+                    token = next((t for t in tokens if t.get("outcome") in ["No", "NO"]), None)
+
+                if edge < auto_trading["min_edge"] or token is None:
+                    continue
+
+                # Kelly kriterij
+                b = (1 / market_p) - 1
+                if trade == "YES":
+                    kelly_f = (b * true_prob - (1 - true_prob)) / b
+                else:
+                    kelly_f = (b * (1 - true_prob) - true_prob) / b
+
+                kelly_f = max(0, min(kelly_f, 0.25))
+                half_kelly = kelly_f * 0.5
+
+                bet_amount = round(auto_trading["bankroll"] * min(half_kelly, auto_trading["max_bet_pct"]), 2)
+                bet_amount = max(1.0, min(bet_amount, auto_trading["bankroll"] * auto_trading["max_bet_pct"]))
+
+                if bet_amount < 1.0:
+                    continue
 
                 try:
-                    resp = anthropic_client.messages.create(
-                        model="claude-opus-4-6",
-                        max_tokens=512,
-                        thinking={"type": "adaptive"},
-                        system="Ti si ekspert za prediction markets. Analiziraj precizno i odgovaraj SAMO u traženom JSON formatu.",
-                        tools=[
-                            {"type": "web_search_20260209", "name": "web_search"},
-                        ],
-                        messages=[{"role": "user", "content": prompt}]
-                    )
-
-                    ai_text = ""
-                    for block in resp.content:
-                        if block.type == "text":
-                            ai_text += block.text
-
-                    # Parsiraj JSON
-                    import json, re
-                    json_match = re.search(r'\{[^{}]+\}', ai_text, re.DOTALL)
-                    if not json_match:
-                        continue
-
-                    data = json.loads(json_match.group())
-                    true_prob = float(data.get("true_probability_yes", 0))
-                    confidence = data.get("confidence", "low")
-                    reasoning = data.get("reasoning", "")
-                    trade = data.get("trade", "SKIP")
-
-                    if trade == "SKIP" or confidence == "low":
-                        continue
-
-                    # Izračunaj edge i Kelly bet
-                    if trade == "YES":
-                        market_p = yes_price
-                        edge = true_prob - market_p
-                        token = next((t for t in tokens if t.get("outcome") in ["Yes", "YES"]), None)
-                    else:  # NO
-                        market_p = 1 - yes_price
-                        true_p_no = 1 - true_prob
-                        edge = true_p_no - market_p
-                        token = next((t for t in tokens if t.get("outcome") in ["No", "NO"]), None)
-
-                    if edge < auto_trading["min_edge"] or token is None:
-                        continue
-
-                    # Kelly kriterij
-                    # f = (bp - q) / b gdje je b = (1/market_p - 1), p = true_prob, q = 1-p
-                    b = (1 / market_p) - 1
-                    if trade == "YES":
-                        kelly_f = (b * true_prob - (1 - true_prob)) / b
-                    else:
-                        kelly_f = (b * (1 - true_prob) - true_prob) / b
-
-                    kelly_f = max(0, min(kelly_f, 0.25))  # Max 25% Kelly
-                    half_kelly = kelly_f * 0.5  # Pola Kellyja za sigurnost
-
-                    bet_amount = round(auto_trading["bankroll"] * min(half_kelly, auto_trading["max_bet_pct"]), 2)
-                    bet_amount = max(1.0, min(bet_amount, auto_trading["bankroll"] * auto_trading["max_bet_pct"]))
-
-                    if bet_amount < 1.0:
-                        continue
-
                     # Postavi narudžbu
                     order_args = OrderArgs(
                         token_id=token["token_id"],
-                        price=market_p + 0.01,  # Malo iznad tržišne za fill
+                        price=market_p + 0.01,
                         size=bet_amount,
                         side="BUY",
                     )
@@ -777,23 +757,21 @@ Odgovori SAMO u ovom JSON formatu (bez ičeg drugog):
                     order_resp = polymarket_client.create_and_post_order(order_args)
                     order_id = order_resp.orderID if hasattr(order_resp, "orderID") else str(order_resp)
 
-                    # Notifikacija
                     msg = (
                         f"🤖 AUTO-TRADE IZVRSEN\n\n"
                         f"Pitanje: {question[:80]}\n"
                         f"Trade: {trade}\n"
                         f"Tržišna cijena: {market_p*100:.1f}%\n"
-                        f"AI procjena: {true_prob*100:.1f}%\n"
+                        f"Procjena: {true_prob*100:.1f}%\n"
                         f"Edge: {edge*100:.1f}%\n"
                         f"Bet: {bet_amount:.2f} USDC\n"
-                        f"Kelly: {kelly_f*100:.1f}% (koristim {half_kelly*100:.1f}%)\n"
-                        f"Razlog: {reasoning[:150]}\n"
+                        f"Kelly: {half_kelly*100:.1f}%\n"
+                        f"Razlog: {reasoning}\n"
                         f"Order ID: {order_id[:20]}..."
                     )
                     await app.bot.send_message(chat_id, msg)
                     logger.info(f"Auto-trade: {trade} {bet_amount} USDC na '{question[:50]}'")
 
-                    # Malo pauziraj između tradesova
                     await asyncio.sleep(5)
 
                 except Exception as e:
