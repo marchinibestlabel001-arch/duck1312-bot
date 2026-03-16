@@ -747,10 +747,12 @@ async def auto_scan_and_trade(app):
 
                 try:
                     # Postavi narudžbu
+                    order_price = round(market_p + 0.01, 4)
+                    order_size = round(bet_amount / order_price, 1)  # dionice = dolari / cijena
                     order_args = OrderArgs(
                         token_id=token["token_id"],
-                        price=market_p + 0.01,
-                        size=bet_amount,
+                        price=order_price,
+                        size=order_size,
                         side="BUY",
                     )
 
